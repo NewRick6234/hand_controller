@@ -5,7 +5,9 @@ import mediapipe as mp
 import pandas as pd
 
 # CONFIGURACOES
-CAMERA_INDEX = 0
+CAMERA_INDEX = (
+    0  # 0 para webcam integrada, 1 ou superior para câmeras USB externas
+)
 MODEL_PATH = "hand_landmarker.task"
 DATASET_PATH = "dataset/gestures.csv"
 
@@ -45,20 +47,12 @@ options = HandLandmarkerOptions(
     min_tracking_confidence=0.6,
 )
 
-# ABRE CAMERA VIA STREAM IP DO DROIDCAM
-# (Substitua 192.168.X.X pelo IP que aparece no app do seu celular)
-url = "http://192.168.0.2:4747/video"
-camera = cv2.VideoCapture(url)
+# ABRE A WEBCAM DO PC DIRETAMENTE
+camera = cv2.VideoCapture(CAMERA_INDEX)
 
 if not camera.isOpened():
   raise RuntimeError(
-      "Nao foi possivel conectar ao DroidCam via IP. "
-      "Verifique se o IP esta correto, se o celular e o PC estao "
-      "na mesma rede Wi-Fi e se o app DroidCam esta aberto na tela."
-  )
-if not camera.isOpened():
-  raise RuntimeError(
-      "Nao foi possivel abrir a camera. Verifique o indice do DroidCam."
+      "Nao foi possivel abrir a webcam do PC. Verifique o indice da camera."
   )
 
 # VARIAVEIS
@@ -92,7 +86,7 @@ conexoes = [
     (0, 17),
 ]
 
-print("COLETA DE DADOS INICIADA")
+print("COLETA DE DADOS INICIADA (Webcam do PC)")
 print("1 - Mao aberta")
 print("2 - Punho fechado")
 print("3 - Indicador")
