@@ -26,6 +26,11 @@ if not os.path.exists(MODEL_PATH):
 
 modelo = joblib.load(MODEL_PATH)
 print("Modelo carregado com sucesso!")
+print(f"Classes do modelo: {list(modelo.classes_)}")
+
+if "apontar_esquerda" not in modelo.classes_ or "apontar_direita" not in modelo.classes_:
+  print("\n[AVISO] O modelo atual ainda contem as classes antigas.")
+  print("Lembre-se de rodar 'collect_data.py' e 'train_model.py' para registrar os novos gestos.\n")
 
 # Configurações da Câmera (otimizadas para menor atraso)
 CAMERA_INDEX = 0
@@ -85,6 +90,7 @@ inicio = time.monotonic()
 ultimo_timestamp = 0
 gesto_anterior = None
 texto_status = "Iniciando..."
+texto_acao = "PARADO"
 
 print("\nIniciando controle por gestos...")
 print("Pressione 'Q' na janela do OpenCV para sair.")
@@ -156,49 +162,74 @@ try:
         # --- AÇÕES PARA O JOGO ---
         agora = time.monotonic()
 
-        if confianca > 0.70:
+        if confianca > 0.65:
           texto_status = f"Gesto: {predicao} ({confianca * 100:.1f}%)"
 
-          if (agora - ultimo_comando_tempo) >= DELAY_COMANDO:
-            if predicao == "dois_dedos":
+          # PULO: Mao fechada (disparo imediato ao fechar a mao)
+          if predicao == "fechada":
+            soltar_tecla_atual()
+            if gesto_anterior != "fechada":
+              # Envia 'space' (e 'up' para jogos tipo Subway Surfers)
+              pyautogui.press("space")
+              pyautogui.press("up")
+              print(">>> PULO ACIONADO!")
+            texto_acao = "PULO [Espaco / Up]"
+
+          elif (agora - ultimo_comando_tempo) >= DELAY_COMANDO:
+            # Movimento para DIREITA
+            if predicao in ["apontar_direita", "dois_dedos"]:
               if tecla_atual != "right":
                 pyautogui.keyUp("left")
                 pyautogui.keyDown("right")
                 tecla_atual = "right"
               ultimo_comando_tempo = agora
+              texto_acao = "DIREITA [->]"
 
-            elif predicao == "indicador":
+            # Movimento para ESQUERDA
+            elif predicao in ["apontar_esquerda", "indicador"]:
               if tecla_atual != "left":
                 pyautogui.keyUp("right")
                 pyautogui.keyDown("left")
                 tecla_atual = "left"
               ultimo_comando_tempo = agora
+              texto_acao = "ESQUERDA [<-]"
 
+            # NEUTRO / PARADO: Mao aberta
             elif predicao == "aberta":
               soltar_tecla_atual()
-              if gesto_anterior != "aberta":
-                pyautogui.press("space")
-                ultimo_comando_tempo = agora
+              texto_acao = "PARADO (Neutro)"
 
             else:
               soltar_tecla_atual()
+              texto_acao = "PARADO"
 
           gesto_anterior = predicao
         else:
           texto_status = "Incerto..."
           soltar_tecla_atual()
+          texto_acao = "PARADO"
       else:
         texto_status = "Nenhuma mao detectada"
         soltar_tecla_atual()
+        texto_acao = "PARADO"
 
       # Exibe informações na janela do vídeo
       cv2.putText(
           frame,
           texto_status,
-          (10, 40),
+          (10, 35),
           cv2.FONT_HERSHEY_SIMPLEX,
           0.7,
           (0, 255, 0),
+          2,
+      )
+      cv2.putText(
+          frame,
+          f"Acao: {texto_acao}",
+          (10, 68),
+          cv2.FONT_HERSHEY_SIMPLEX,
+          0.65,
+          (255, 255, 0),
           2,
       )
       cv2.imshow("Hand Controller - Jogo", frame)

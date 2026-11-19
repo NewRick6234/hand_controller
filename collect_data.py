@@ -16,11 +16,30 @@ INTERVALO = 0.15
 GESTOS = {
     ord("1"): "aberta",
     ord("2"): "fechada",
-    ord("3"): "indicador",
-    ord("4"): "dois_dedos",
+    ord("3"): "apontar_esquerda",
+    ord("4"): "apontar_direita",
+}
+
+NOMES_GESTOS = {
+    "aberta": "Mao Aberta (Neutro)",
+    "fechada": "Mao Fechada (Pulo)",
+    "apontar_esquerda": "Apontar Esquerda",
+    "apontar_direita": "Apontar Direita",
 }
 
 os.makedirs("dataset", exist_ok=True)
+
+# CARREGA CONTAGEM ATUAL DE AMOSTRAS
+contagens = {g: 0 for g in GESTOS.values()}
+if os.path.exists(DATASET_PATH) and os.path.getsize(DATASET_PATH) > 0:
+  try:
+    df_temp = pd.read_csv(DATASET_PATH)
+    if "label" in df_temp.columns:
+      for k, v in df_temp["label"].value_counts().items():
+        if k in contagens:
+          contagens[k] = int(v)
+  except Exception:
+    pass
 
 # COLUNAS DO CSV
 colunas = ["label"]
@@ -86,13 +105,15 @@ conexoes = [
     (0, 17),
 ]
 
-print("COLETA DE DADOS INICIADA (Webcam do PC)")
-print("1 - Mao aberta")
-print("2 - Punho fechado")
-print("3 - Indicador")
-print("4 - Dois dedos")
+print("=" * 60)
+print("COLETA DE DADOS INICIADA (Webcam)")
+print("1 - Mao aberta (Neutro / Parado)")
+print("2 - Mao fechada (Pulo - Espaco)")
+print("3 - Apontar para a Esquerda (Andar Esquerda)")
+print("4 - Apontar para a Direita (Andar Direita)")
 print("ESPACO - Pausar coleta")
-print("Q - Sair")
+print("Q - Sair e finalizar")
+print("=" * 60)
 
 with HandLandmarker.create_from_options(options) as detector:
 
@@ -182,30 +203,47 @@ with HandLandmarker.create_from_options(options) as detector:
         )
 
         ultimo_registro = agora
-
-        print("Amostra:", gesto_ativo)
+        contagens[gesto_ativo] += 1
+        print(f"[{gesto_ativo}] Amostras: {contagens[gesto_ativo]}")
 
     # INFORMACOES NA TELA
-    status = gesto_ativo if gesto_ativo else "PAUSADO"
+    status = NOMES_GESTOS.get(gesto_ativo, "PAUSADO")
+    cor_status = (0, 255, 0) if gesto_ativo else (0, 165, 255)
 
     cv2.putText(
         frame,
-        f"Gesto: {status}",
-        (10, 35),
+        f"Gesto Ativo: {status}",
+        (10, 30),
         cv2.FONT_HERSHEY_SIMPLEX,
-        0.8,
-        (0, 255, 0),
+        0.7,
+        cor_status,
+        2,
+    )
+
+    info_counts = (
+        f"Aberta: {contagens['aberta']} | "
+        f"Fechada: {contagens['fechada']} | "
+        f"Esq: {contagens['apontar_esquerda']} | "
+        f"Dir: {contagens['apontar_direita']}"
+    )
+    cv2.putText(
+        frame,
+        info_counts,
+        (10, 60),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.55,
+        (255, 255, 0),
         2,
     )
 
     cv2.putText(
         frame,
-        "1-4: Selecionar | ESPACO: Pausar | Q: Sair",
-        (10, 70),
+        "1:Aberta | 2:Fechada | 3:Esq | 4:Dir | ESPACO:Pausar | Q:Sair",
+        (10, 90),
         cv2.FONT_HERSHEY_SIMPLEX,
-        0.5,
-        (255, 255, 255),
-        2,
+        0.45,
+        (200, 200, 200),
+        1,
     )
 
     cv2.imshow("Hand Controller - Coleta", frame)
