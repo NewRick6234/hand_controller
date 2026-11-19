@@ -1,13 +1,18 @@
 import os
 import time
+import warnings
 import cv2
 import joblib
 import mediapipe as mp
 import numpy as np
 import pyautogui
 
-# Configuração de segurança do PyAudio/PyAutoGUI (opcional, evita falhas bruscas se mover o mouse para o canto)
+# Ignora avisos desnecessários no terminal
+warnings.filterwarnings("ignore")
+
+# Configuração de segurança e delay do PyAutoGUI
 pyautogui.FAILSAFE = False
+pyautogui.PAUSE = 0.03  # Pequena pausa padrão entre comandos do PyAutoGUI
 
 # Carrega o modelo treinado
 MODEL_PATH = "hand_model.pkl"
@@ -22,14 +27,17 @@ if not os.path.exists(MODEL_PATH):
 modelo = joblib.load(MODEL_PATH)
 print("Modelo carregado com sucesso!")
 
-# Configurações da Câmera
+# Configurações da Câmera (otimizadas para menor atraso)
 CAMERA_INDEX = 0
 camera = cv2.VideoCapture(CAMERA_INDEX)
+camera.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+camera.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
 if not camera.isOpened():
   raise RuntimeError("Não foi possível abrir a webcam.")
 
-# Configuração do MediaPipe Tasks
+# Configuração do MediaPipe Tasks na CPU
 BaseOptions = mp.tasks.BaseOptions
 HandLandmarker = mp.tasks.vision.HandLandmarker
 HandLandmarkerOptions = mp.tasks.vision.HandLandmarkerOptions
@@ -39,9 +47,9 @@ options = HandLandmarkerOptions(
     base_options=BaseOptions(model_asset_path=TASK_PATH),
     running_mode=RunningMode.VIDEO,
     num_hands=1,
-    min_hand_detection_confidence=0.6,
-    min_hand_presence_confidence=0.6,
-    min_tracking_confidence=0.6,
+    min_hand_detection_confidence=0.5,
+    min_hand_presence_confidence=0.5,
+    min_tracking_confidence=0.5,
 )
 
 # Conexões dos dedos para visualização
@@ -69,113 +77,137 @@ conexoes = [
     (0, 17),
 ]
 
+DELAY_COMANDO = 0.12  # Intervalo mínimo (em segundos) entre ações
+ultimo_comando_tempo = 0.0
+tecla_atual = None
+
 inicio = time.monotonic()
 ultimo_timestamp = 0
 gesto_anterior = None
+texto_status = "Iniciando..."
 
 print("\nIniciando controle por gestos...")
 print("Pressione 'Q' na janela do OpenCV para sair.")
 
-with HandLandmarker.create_from_options(options) as detector:
-  while True:
-    sucesso, frame = camera.read()
-    if not sucesso or frame is None:
-      break
 
-    # Espelha a imagem para ficar natural (como um espelho)
-    frame = cv2.flip(frame, 1)
-    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    imagem_mp = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+def soltar_tecla_atual():
+  global tecla_atual
+  if tecla_atual is not None:
+    pyautogui.keyUp(tecla_atual)
+    tecla_atual = None
+  pyautogui.keyUp("right")
+  pyautogui.keyUp("left")
 
-    timestamp = int((time.monotonic() - inicio) * 1000)
-    timestamp = max(timestamp, ultimo_timestamp + 1)
-    ultimo_timestamp = timestamp
 
-    resultado = detector.detect_for_video(imagem_mp, timestamp)
+try:
+  with HandLandmarker.create_from_options(options) as detector:
+    while True:
+      sucesso, frame = camera.read()
+      if not sucesso or frame is None:
+        break
 
-    texto_status = "Nenhuma mao detectada"
+      # Espelha a imagem para ficar natural
+      frame = cv2.flip(frame, 1)
 
-    if resultado.hand_landmarks:
-      landmarks = resultado.hand_landmarks[0]
-      altura, largura, _ = frame.shape
+      # Conversão eficiente para o MediaPipe
+      rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+      imagem_mp = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
 
-      # Desenha os pontos na tela
-      pontos_tela = []
-      for p in landmarks:
-        px = int(p.x * largura)
-        py = int(p.y * altura)
-        pontos_tela.append((px, py))
-        cv2.circle(frame, (px, py), 5, (0, 255, 0), -1)
+      timestamp = int((time.monotonic() - inicio) * 1000)
+      timestamp = max(timestamp, ultimo_timestamp + 1)
+      ultimo_timestamp = timestamp
 
-      for a, b in conexoes:
-        cv2.line(frame, pontos_tela[a], pontos_tela[b], (255, 0, 0), 2)
+      resultado = detector.detect_for_video(imagem_mp, timestamp)
 
-      # Normaliza os dados (mesmo processo feito no collect_data.py)
-      pulso = landmarks[0]
-      escala = max(
-          max(abs(p.x - pulso.x), abs(p.y - pulso.y)) for p in landmarks
-      )
-      escala = max(escala, 0.0001)
+      if resultado.hand_landmarks:
+        landmarks = resultado.hand_landmarks[0]
+        altura, largura, _ = frame.shape
 
-      dados = []
-      for p in landmarks:
-        x = (p.x - pulso.x) / escala
-        y = (p.y - pulso.y) / escala
-        z = (p.z - pulso.z) / escala
-        dados.extend([x, y, z])
+        # Desenha os pontos e conexões na tela
+        pontos_tela = []
+        for p in landmarks:
+          px = int(p.x * largura)
+          py = int(p.y * altura)
+          pontos_tela.append((px, py))
+          cv2.circle(frame, (px, py), 4, (0, 255, 0), -1)
 
-      # Faz a predição com o modelo treinado
-      predicao = modelo.predict([dados])[0]
-      probabilidades = modelo.predict_proba([dados])[0]
-      confianca = max(probabilidades)
+        for a, b in conexoes:
+          cv2.line(frame, pontos_tela[a], pontos_tela[b], (255, 0, 0), 2)
 
-      # --- AÇÕES PARA O JOGO ---
-      if confianca > 0.75:
-        texto_status = f"Gesto: {predicao} ({confianca * 100:.1f}%)"
+        # Normaliza os dados para o modelo
+        pulso = landmarks[0]
+        escala = max(
+            max(abs(p.x - pulso.x), abs(p.y - pulso.y)) for p in landmarks
+        )
+        escala = max(escala, 0.0001)
 
-        # Mapeamento para o movimento do personagem:
-        if predicao == "dois_dedos":
-          # Mantém a seta para a direita pressionada continuamente
-          pyautogui.keyDown("right")
-          pyautogui.keyUp("left")
-        elif predicao == "indicador":
-          # Mantém a seta para a esquerda pressionada continuamente
-          pyautogui.keyDown("left")
-          pyautogui.keyUp("right")
-        elif predicao == "aberta":
-          # Salto
-          if gesto_anterior != "aberta":
-            pyautogui.press("space")
-          pyautogui.keyUp("right")
-          pyautogui.keyUp("left")
+        dados = []
+        for p in landmarks:
+          x = (p.x - pulso.x) / escala
+          y = (p.y - pulso.y) / escala
+          z = (p.z - pulso.z) / escala
+          dados.extend([x, y, z])
+
+        # Predição com o modelo treinado
+        predicao = modelo.predict([dados])[0]
+        probabilidades = modelo.predict_proba([dados])[0]
+        confianca = max(probabilidades)
+
+        # --- AÇÕES PARA O JOGO ---
+        agora = time.monotonic()
+
+        if confianca > 0.70:
+          texto_status = f"Gesto: {predicao} ({confianca * 100:.1f}%)"
+
+          if (agora - ultimo_comando_tempo) >= DELAY_COMANDO:
+            if predicao == "dois_dedos":
+              if tecla_atual != "right":
+                pyautogui.keyUp("left")
+                pyautogui.keyDown("right")
+                tecla_atual = "right"
+              ultimo_comando_tempo = agora
+
+            elif predicao == "indicador":
+              if tecla_atual != "left":
+                pyautogui.keyUp("right")
+                pyautogui.keyDown("left")
+                tecla_atual = "left"
+              ultimo_comando_tempo = agora
+
+            elif predicao == "aberta":
+              soltar_tecla_atual()
+              if gesto_anterior != "aberta":
+                pyautogui.press("space")
+                ultimo_comando_tempo = agora
+
+            else:
+              soltar_tecla_atual()
+
+          gesto_anterior = predicao
         else:
-          # Se for outro gesto, solta as setas
-          pyautogui.keyUp("right")
-          pyautogui.keyUp("left")
-
-        gesto_anterior = predicao
+          texto_status = "Incerto..."
+          soltar_tecla_atual()
       else:
-        texto_status = "Incerto..."
-        # Segurança: solta as teclas se perder o rastreamento da mão
-        pyautogui.keyUp("right")
-        pyautogui.keyUp("left")
+        texto_status = "Nenhuma mao detectada"
+        soltar_tecla_atual()
 
-    # Exibe informações na janela do vídeo
-    cv2.putText(
-        frame,
-        texto_status,
-        (10, 40),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.8,
-        (0, 255, 0),
-        2,
-    )
-    cv2.imshow("Hand Controller - Jogo", frame)
+      # Exibe informações na janela do vídeo
+      cv2.putText(
+          frame,
+          texto_status,
+          (10, 40),
+          cv2.FONT_HERSHEY_SIMPLEX,
+          0.7,
+          (0, 255, 0),
+          2,
+      )
+      cv2.imshow("Hand Controller - Jogo", frame)
 
-    # Fecha se apertar 'q'
-    if cv2.waitKey(1) & 0xFF == ord("q"):
-      break
-
-camera.release()
-cv2.destroyAllWindows()
-print("Encerrado.")
+      # Fecha se apertar 'q'
+      if cv2.waitKey(1) & 0xFF == ord("q"):
+        break
+finally:
+  soltar_tecla_atual()
+  camera.release()
+  cv2.destroyAllWindows()
+  print("Encerrado.")
